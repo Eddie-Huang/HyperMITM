@@ -30,3 +30,9 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+
+# Bundled cc-connect sidecar (built by scripts/build-connector.mjs)
+/src-tauri/binaries/
+
+# Serena tooling
+.serena/

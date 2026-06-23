@@ -384,6 +384,127 @@ impl LogConfig {
     }
 }
 
+/// Headroom（上下文压缩反向代理）集成配置
+///
+/// 存储在 settings 表中，key = "headroom_config"（JSON 格式）。
+///
+/// 当 `enabled = true` 时，Hyper MITM 会在本地代理之前再启动一层 headroom
+/// 反向代理，并把客户端（Claude Code）的 `ANTHROPIC_BASE_URL` 指向 headroom，
+/// headroom 的上游再指回 Hyper MITM 的本地代理：
+///
+///   Claude Code → headroom(:port) → 本地代理(:listen_port) → 供应商
+fn default_headroom_port() -> u16 {
+    8787
+}
+
+fn default_headroom_python() -> String {
+    "python".to_string()
+}
+
+fn default_headroom_mode() -> String {
+    "token".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadroomConfig {
+    /// 总开关：是否在本地代理前置 headroom 压缩层（默认关闭）
+    #[serde(default)]
+    pub enabled: bool,
+    /// headroom 监听端口（默认 8787）
+    #[serde(default = "default_headroom_port")]
+    pub port: u16,
+    /// 运行 headroom 的 Python 可执行文件（默认 "python"，可填绝对路径）
+    #[serde(default = "default_headroom_python")]
+    pub python_path: String,
+    /// 优化模式：token（最大压缩）| cache（最大化前缀缓存命中）
+    #[serde(default = "default_headroom_mode")]
+    pub mode: String,
+    /// 追加到 `headroom proxy` 的额外命令行参数（空格分隔，可选）
+    #[serde(default)]
+    pub extra_args: String,
+}
+
+impl Default for HeadroomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_headroom_port(),
+            python_path: default_headroom_python(),
+            mode: default_headroom_mode(),
+            extra_args: String::new(),
+        }
+    }
+}
+
+impl HeadroomConfig {
+    /// 客户端应连接的 headroom origin，例如 `http://127.0.0.1:8787`
+    pub fn origin(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+}
+
+// ============================================================================
+// Connector（cc-connect / 企业微信 等消息平台 ↔ Claude Code 桥接）配置
+//
+// Hyper MITM 内嵌精简版 cc-connect 作为子进程：消息平台（当前为企业微信
+// websocket 智能机器人）→ Claude Code（stream-json）→ headroom/本地代理 → 供应商。
+// 每个 project 对应一个工作目录 + 一个企业微信机器人。
+// ============================================================================
+
+fn default_connector_mode() -> String {
+    "default".to_string()
+}
+
+fn default_connector_model() -> String {
+    "claude-opus-4-8".to_string()
+}
+
+fn default_connector_allow_from() -> String {
+    "*".to_string()
+}
+
+/// 单个 connector 项目：一个工作目录 + 一个企业微信机器人。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorProject {
+    /// 项目名（cc-connect 内唯一标识）
+    pub name: String,
+    /// Claude Code 工作目录
+    #[serde(default)]
+    pub work_dir: String,
+    /// 使用的模型（必须为 Claude 模型才能用 skills/MCP，默认 claude-opus-4-8）
+    #[serde(default = "default_connector_model")]
+    pub model: String,
+    /// 权限模式：default | acceptEdits | plan | auto | bypassPermissions
+    #[serde(default = "default_connector_mode")]
+    pub mode: String,
+    /// 企业微信 websocket 智能机器人 ID
+    #[serde(default)]
+    pub bot_id: String,
+    /// 企业微信机器人密钥
+    #[serde(default)]
+    pub bot_secret: String,
+    /// 允许触达的用户（"*" 表示全部）
+    #[serde(default = "default_connector_allow_from")]
+    pub allow_from: String,
+}
+
+/// Connector 总配置（持久化于 settings 键 `connector_config`）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorConfig {
+    /// 总开关：是否启动内嵌 connector
+    #[serde(default)]
+    pub enabled: bool,
+    /// cc-connect 可执行文件路径（空 = 使用随应用打包的 sidecar）
+    #[serde(default)]
+    pub binary_path: String,
+    /// 项目列表
+    #[serde(default)]
+    pub projects: Vec<ConnectorProject>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

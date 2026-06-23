@@ -307,6 +307,48 @@ impl Database {
         self.set_setting("copilot_optimizer_config", &json)
     }
 
+    // --- Headroom 集成配置 ---
+
+    /// 获取 headroom 配置（不存在则返回默认值，enabled=false）
+    pub fn get_headroom_config(&self) -> Result<crate::proxy::types::HeadroomConfig, AppError> {
+        match self.get_setting("headroom_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 headroom 配置失败: {e}"))),
+            None => Ok(crate::proxy::types::HeadroomConfig::default()),
+        }
+    }
+
+    /// 更新 headroom 配置
+    pub fn set_headroom_config(
+        &self,
+        config: &crate::proxy::types::HeadroomConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 headroom 配置失败: {e}")))?;
+        self.set_setting("headroom_config", &json)
+    }
+
+    // --- Connector（消息平台 ↔ Claude Code 桥接）配置 ---
+
+    /// 获取 connector 配置（不存在则返回默认值，enabled=false）
+    pub fn get_connector_config(&self) -> Result<crate::proxy::types::ConnectorConfig, AppError> {
+        match self.get_setting("connector_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 connector 配置失败: {e}"))),
+            None => Ok(crate::proxy::types::ConnectorConfig::default()),
+        }
+    }
+
+    /// 更新 connector 配置
+    pub fn set_connector_config(
+        &self,
+        config: &crate::proxy::types::ConnectorConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 connector 配置失败: {e}")))?;
+        self.set_setting("connector_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

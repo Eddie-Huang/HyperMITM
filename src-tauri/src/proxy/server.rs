@@ -108,10 +108,17 @@ impl ProxyServer {
         // 构建路由
         let app = self.build_router();
 
+        // 启动前清理：若端口被上一实例遗留的孤儿进程占用（继承了监听套接字），先结束它。
+        crate::proxy::win_ports::free_port_if_held(self.config.listen_port);
+
         // 绑定监听器
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+
+        // 关键：清除监听套接字的可继承标志，避免后续 spawn 的 headroom / cc-connect
+        // 子进程继承该套接字，导致应用被强制结束后端口被孤儿进程长期占用。
+        crate::proxy::win_ports::set_non_inheritable(&listener);
         let local_addr = listener
             .local_addr()
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;

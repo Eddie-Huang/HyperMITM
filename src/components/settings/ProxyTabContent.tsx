@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
+import {
+  Server,
+  Activity,
+  Zap,
+  Globe,
+  ShieldAlert,
+  Sparkles,
+  Bot,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,6 +23,8 @@ import { AutoFailoverConfigPanel } from "@/components/proxy/AutoFailoverConfigPa
 import { FailoverQueueManager } from "@/components/proxy/FailoverQueueManager";
 import { RectifierConfigPanel } from "@/components/settings/RectifierConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
+import { HeadroomSettings } from "@/components/settings/HeadroomSettings";
+import { ConnectorSettings } from "@/components/settings/ConnectorSettings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -257,6 +267,62 @@ export function ProxyTabContent({
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
             <GlobalProxySettings />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Headroom context-compression layer */}
+        <AccordionItem
+          value="headroom"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Sparkles className="h-5 w-5 text-pink-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.headroom.title", {
+                    defaultValue: "Headroom 压缩层",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.headroom.description", {
+                    defaultValue:
+                      "在本地代理前置 headroom 上下文压缩，降低 token 消耗",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <HeadroomSettings />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Connector: WeCom ↔ Claude Code bridge (embedded cc-connect) */}
+        <AccordionItem
+          value="connector"
+          className="rounded-xl glass-card overflow-hidden"
+        >
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+            <div className="flex items-center gap-3">
+              <Bot className="h-5 w-5 text-indigo-500" />
+              <div className="text-left">
+                <h3 className="text-base font-semibold">
+                  {t("settings.advanced.connector.title", {
+                    defaultValue: "消息平台桥接",
+                  })}
+                </h3>
+                <p className="text-sm text-muted-foreground font-normal">
+                  {t("settings.advanced.connector.description", {
+                    defaultValue:
+                      "把企业微信等消息平台桥接到 Claude Code（内嵌 cc-connect）",
+                  })}
+                </p>
+              </div>
+            </div>
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+            <ConnectorSettings />
           </AccordionContent>
         </AccordionItem>
       </Accordion>

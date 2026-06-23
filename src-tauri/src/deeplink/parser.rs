@@ -17,11 +17,11 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
     let url = Url::parse(url_str)
         .map_err(|e| AppError::InvalidInput(format!("Invalid deep link URL: {e}")))?;
 
-    // Validate scheme
+    // Validate scheme (accept the new `hypermitm://` brand and the legacy `ccswitch://`)
     let scheme = url.scheme();
-    if scheme != "ccswitch" {
+    if scheme != "hypermitm" && scheme != "ccswitch" {
         return Err(AppError::InvalidInput(format!(
-            "Invalid scheme: expected 'ccswitch', got '{scheme}'"
+            "Invalid scheme: expected 'hypermitm' or 'ccswitch', got '{scheme}'"
         )));
     }
 

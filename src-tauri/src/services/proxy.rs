@@ -23,7 +23,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 /// 代理接管模式下需要从 Claude Live 配置中移除的"模型覆盖"字段。
 ///
-/// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
+/// 原因：接管模式下 `*_MODEL` 必须由 Hyper MITM 写成稳定的 Claude 角色别名，
 /// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
 /// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
 const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
@@ -321,10 +321,11 @@ impl ProxyService {
         let effective_provider = self.claude_provider_with_effective_settings(provider)?;
         let mut effective_settings = effective_provider.settings_config.clone();
         let (proxy_url, _) = self.build_proxy_urls().await?;
+        let claude_url = self.claude_client_base_url(&proxy_url);
 
         Self::apply_claude_takeover_fields_for_provider(
             &mut effective_settings,
-            &proxy_url,
+            &claude_url,
             &effective_provider,
         );
         self.write_claude_live(&effective_settings)?;
@@ -1045,6 +1046,11 @@ impl ProxyService {
 
     /// 停止代理服务器
     pub async fn stop(&self) -> Result<(), String> {
+        // headroom 仅在本地代理运行期间有意义：代理停止时一并停止前置压缩层
+        let _ = crate::services::HeadroomManager::stop();
+        // connector（cc-connect）依赖本地代理链路：代理停止时一并停止
+        let _ = crate::services::ConnectorManager::stop();
+
         if let Some(server) = self.server.write().await.take() {
             server
                 .stop()
@@ -1273,6 +1279,34 @@ impl ProxyService {
         Ok((proxy_url, proxy_codex_base_url))
     }
 
+    /// 本地代理的 origin（headroom 集成时作为其上游），形如 `http://127.0.0.1:15721`。
+    ///
+    /// 复用 `build_proxy_urls`，因此要求代理已在运行（端口为 0 的动态分配场景）。
+    pub async fn local_proxy_origin(&self) -> Result<String, String> {
+        Ok(self.build_proxy_urls().await?.0)
+    }
+
+    /// 计算写入 Claude 客户端的 base url。
+    ///
+    /// - headroom 关闭：直接返回本地代理 origin（`proxy_url`）。
+    /// - headroom 开启：确保 headroom 以 `proxy_url` 为上游运行，返回 headroom origin，
+    ///   形成 `Claude Code → headroom → 本地代理 → 供应商`。
+    ///
+    /// best-effort：headroom 启动失败时回退到 `proxy_url`，保证基础接管不被破坏。
+    fn claude_client_base_url(&self, proxy_url: &str) -> String {
+        let cfg = self.db.get_headroom_config().unwrap_or_default();
+        if !cfg.enabled {
+            return proxy_url.to_string();
+        }
+        match crate::services::HeadroomManager::ensure(&cfg, proxy_url) {
+            Ok(_) => cfg.origin(),
+            Err(e) => {
+                log::warn!("[Headroom] 接管时启动失败，回退直连本地代理: {e}");
+                proxy_url.to_string()
+            }
+        }
+    }
+
     /// 接管各应用的 Live 配置（写入代理地址）
     ///
     /// 代理服务器的路由已经根据 API 端点自动区分应用类型：
@@ -1288,13 +1322,14 @@ impl ProxyService {
         if let Ok(mut live_config) = self.read_claude_live() {
             let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
             let claude_provider = self.claude_provider_with_effective_settings(&claude_provider)?;
+            let claude_url = self.claude_client_base_url(&proxy_url);
             Self::apply_claude_takeover_fields_for_provider(
                 &mut live_config,
-                &proxy_url,
+                &claude_url,
                 &claude_provider,
             );
             self.write_claude_live(&live_config)?;
-            log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
+            log::info!("Claude Live 配置已接管，客户端地址: {claude_url}");
         }
 
         // Codex: 修改 config.toml 的 base_url，auth.json 的 OPENAI_API_KEY（代理会注入真实 Token）
@@ -1357,13 +1392,14 @@ impl ProxyService {
                 let claude_provider = self.require_current_provider_for_app(&AppType::Claude)?;
                 let claude_provider =
                     self.claude_provider_with_effective_settings(&claude_provider)?;
+                let claude_url = self.claude_client_base_url(&proxy_url);
                 Self::apply_claude_takeover_fields_for_provider(
                     &mut live_config,
-                    &proxy_url,
+                    &claude_url,
                     &claude_provider,
                 );
                 self.write_claude_live(&live_config)?;
-                log::info!("Claude Live 配置已接管，代理地址: {proxy_url}");
+                log::info!("Claude Live 配置已接管，客户端地址: {claude_url}");
             }
             AppType::Codex => {
                 let mut live_config = self.read_codex_live()?;
@@ -1420,6 +1456,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 if let Ok(mut live_config) = self.read_claude_live() {
+                    let claude_url = self.claude_client_base_url(&proxy_url);
                     let claude_provider = self
                         .get_current_provider_for_app(&AppType::Claude)
                         .ok()
@@ -1428,13 +1465,13 @@ impl ProxyService {
                         let provider = self.claude_provider_with_effective_settings(provider)?;
                         Self::apply_claude_takeover_fields_for_provider(
                             &mut live_config,
-                            &proxy_url,
+                            &claude_url,
                             &provider,
                         );
                     } else {
                         Self::apply_claude_takeover_fields_with_policy(
                             &mut live_config,
-                            &proxy_url,
+                            &claude_url,
                             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken,
                         );
                     }
@@ -1750,11 +1787,18 @@ impl ProxyService {
         match app_type {
             AppType::Claude => {
                 let config = self.read_claude_live()?;
+                // headroom 开启时，客户端 base_url 写的是 headroom origin 而非本地代理；
+                // 两者都算「指向当前代理」，否则会被误判为未接管而反复重建接管。
+                let headroom_cfg = self.db.get_headroom_config().unwrap_or_default();
                 let base_url_matches = config
                     .get("env")
                     .and_then(|value| value.get("ANTHROPIC_BASE_URL"))
                     .and_then(|value| value.as_str())
-                    .is_some_and(|url| Self::proxy_urls_match(url, &proxy_url));
+                    .is_some_and(|url| {
+                        Self::proxy_urls_match(url, &proxy_url)
+                            || (headroom_cfg.enabled
+                                && Self::proxy_urls_match(url, &headroom_cfg.origin()))
+                    });
                 Ok(Self::is_claude_live_taken_over(&config) && base_url_matches)
             }
             AppType::Codex => {

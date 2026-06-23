@@ -86,40 +86,70 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.cc-switch)
+/// 应用数据库文件名（沿用 cc-switch 命名以便迁移时零改动）。
+pub const APP_DB_FILENAME: &str = "cc-switch.db";
+
+/// 获取应用配置目录路径 (~/.hyper-mitm)
+///
+/// Hyper MITM 是 cc-switch 的衍生版本。首次运行时若新目录缺少数据库、
+/// 而旧的 `~/.cc-switch` 仍存在数据，则一次性把旧数据迁移过来，
+/// 让既有供应商/配置无缝延续。
 pub fn get_app_config_dir() -> PathBuf {
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }
 
-    let default_dir = get_home_dir().join(".cc-switch");
+    let home = get_home_dir();
+    let default_dir = home.join(".hyper-mitm");
+    let legacy_dir = home.join(".cc-switch");
 
-    // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
-    // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
-    // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
-    // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
-    #[cfg(windows)]
-    {
-        let default_db = default_dir.join("cc-switch.db");
-        if !default_db.exists() {
-            if let Ok(home_env) = std::env::var("HOME") {
-                let trimmed = home_env.trim();
-                if !trimmed.is_empty() {
-                    let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
-                    if legacy_dir.join("cc-switch.db").exists() {
-                        log::info!(
-                            "Detected v3.10.3 legacy database at {}, using it instead of {}",
-                            legacy_dir.display(),
-                            default_dir.display()
-                        );
-                        return legacy_dir;
-                    }
-                }
+    // 一次性迁移：新目录尚无数据库，但旧 cc-switch 目录有 → 复制旧数据。
+    if !default_dir.join(APP_DB_FILENAME).exists() && legacy_dir.join(APP_DB_FILENAME).exists() {
+        match migrate_legacy_data_dir(&legacy_dir, &default_dir) {
+            Ok(()) => log::info!(
+                "已从 cc-switch 旧数据目录迁移到 {}（保留原 {} 不动）",
+                default_dir.display(),
+                legacy_dir.display()
+            ),
+            Err(e) => {
+                // 迁移失败时回退到旧目录，确保用户数据仍可用，避免“数据丢失”。
+                log::warn!(
+                    "从 {} 迁移到 {} 失败：{e}；本次回退使用旧目录",
+                    legacy_dir.display(),
+                    default_dir.display()
+                );
+                return legacy_dir;
             }
         }
     }
 
     default_dir
+}
+
+/// 递归复制旧数据目录到新目录（best-effort，一次性）。
+///
+/// 仅在新目录尚无数据库时调用。保留旧目录不动，方便回滚。
+fn migrate_legacy_data_dir(from: &Path, to: &Path) -> Result<(), AppError> {
+    fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let target = dst.join(entry.file_name());
+            if file_type.is_dir() {
+                copy_dir_recursive(&entry.path(), &target)?;
+            } else if file_type.is_file() {
+                fs::copy(entry.path(), &target)?;
+            }
+            // 忽略符号链接等其它类型
+        }
+        Ok(())
+    }
+
+    copy_dir_recursive(from, to).map_err(|source| AppError::IoContext {
+        context: "复制旧数据目录失败".to_string(),
+        source,
+    })
 }
 
 /// 获取应用配置文件路径
