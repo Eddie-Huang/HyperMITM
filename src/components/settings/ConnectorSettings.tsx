@@ -14,8 +14,6 @@ import { toast } from "sonner";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Loader2,
-  Play,
-  Square,
   RotateCw,
   Plus,
   Trash2,
@@ -30,8 +28,6 @@ import {
   getConnectorConfig,
   getConnectorStatus,
   setConnectorConfig,
-  startConnector,
-  stopConnector,
   importConnectorFromCcConnect,
   type ConnectorConfig,
   type ConnectorProject,
@@ -60,6 +56,12 @@ const newProject = (): ConnectorProject => ({
   botId: "",
   botSecret: "",
   allowFrom: "*",
+  autoCompressEnabled: true,
+  autoCompressMaxTokens: 0,
+  autoCompressMinGapMins: 30,
+  autoResumeEnabled: true,
+  autoResumeMaxAttempts: 3,
+  autoResumeInitialDelaySecs: 5,
 });
 
 export function ConnectorSettings() {
@@ -68,7 +70,6 @@ export function ConnectorSettings() {
   const [status, setStatus] = useState<ConnectorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,40 +169,6 @@ export function ConnectorSettings() {
       setStatus(await getConnectorStatus());
     } catch (e) {
       console.error(e);
-    }
-  };
-
-  const handleStart = async () => {
-    setBusy(true);
-    try {
-      const st = await startConnector();
-      setStatus(st);
-      toast.success(
-        st.autoStartedProxy
-          ? t("settings.connector.startedAuto", {
-              defaultValue: "Connector 已启动，并已自动开启本地代理",
-            })
-          : t("settings.connector.started", { defaultValue: "Connector 已启动" }),
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleStop = async () => {
-    setBusy(true);
-    try {
-      await stopConnector();
-      await refreshStatus();
-      toast.success(
-        t("settings.connector.stopped", { defaultValue: "Connector 已停止" }),
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -412,19 +379,6 @@ export function ConnectorSettings() {
         <Button onClick={() => handleSave(config)} disabled={saving} size="sm">
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {t("common.save", { defaultValue: "保存" })}
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleStart} disabled={busy}>
-          <Play className="mr-2 h-4 w-4" />
-          {t("settings.connector.start", { defaultValue: "启动" })}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleStop}
-          disabled={busy || !running}
-        >
-          <Square className="mr-2 h-4 w-4" />
-          {t("settings.connector.stop", { defaultValue: "停止" })}
         </Button>
         <Button
           variant="ghost"

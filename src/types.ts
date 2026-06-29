@@ -444,8 +444,14 @@ export interface SessionMeta {
 export interface SessionMessage {
   role: string;
   content: string;
+  parts?: MessagePart[];
   ts?: number;
 }
+
+export type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "toolUse"; id: string; name: string; input: string }
+  | { type: "toolResult"; toolUseId: string; content: string };
 
 // MCP 服务器连接参数（宽松：允许扩展字段）
 export interface McpServerSpec {

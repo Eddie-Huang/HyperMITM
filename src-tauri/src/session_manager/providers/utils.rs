@@ -8,6 +8,9 @@ use serde_json::Value;
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
 
+/// Maximum characters for tool input content in session messages.
+pub const TOOL_INPUT_MAX_CHARS: usize = 2000;
+
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
 pub fn read_head_tail_lines(
@@ -85,13 +88,21 @@ pub fn extract_text(content: &Value) -> String {
 fn extract_text_from_item(item: &Value) -> Option<String> {
     let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
 
-    // tool_use: show tool name
+    // tool_use: show tool name + input arguments
     if item_type == "tool_use" {
         let name = item
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        return Some(format!("[Tool: {name}]"));
+        let input_text = item
+            .get("input")
+            .map(|v| format_tool_input(v))
+            .unwrap_or_default();
+        if input_text.is_empty() {
+            return Some(format!("[Tool: {name}]"));
+        }
+        let truncated = truncate_text(&input_text, TOOL_INPUT_MAX_CHARS);
+        return Some(format!("[Tool: {name}]\n{truncated}"));
     }
 
     // tool_result: extract nested content
@@ -125,6 +136,57 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
     }
 
     None
+}
+
+/// Format a tool's input field into readable text.
+/// For object inputs, extract priority keys like "command", "file_path", etc.
+/// For string inputs, return directly. For other types, JSON-serialize.
+fn format_tool_input(input: &Value) -> String {
+    match input {
+        Value::String(s) => s.clone(),
+        Value::Object(map) => {
+            let priority_keys = [
+                "command",
+                "file_path",
+                "pattern",
+                "query",
+                "content",
+                "description",
+                "text",
+            ];
+            let mut parts: Vec<String> = Vec::new();
+            for key in &priority_keys {
+                if let Some(val) = map.get(*key) {
+                    let text = match val.as_str() {
+                        Some(s) => s,
+                        None => &serde_json::to_string(val).unwrap_or_default(),
+                    };
+                    parts.push(format!("{key}: {text}"));
+                }
+            }
+            for (key, val) in map {
+                if !priority_keys.contains(&key.as_str()) {
+                    let text = match val.as_str() {
+                        Some(s) => s,
+                        None => &serde_json::to_string(val).unwrap_or_default(),
+                    };
+                    parts.push(format!("{key}: {text}"));
+                }
+            }
+            parts.join("\n")
+        }
+        _ => serde_json::to_string(input).unwrap_or_default(),
+    }
+}
+
+/// Truncate text to a maximum length, adding an ellipsis suffix if truncated.
+fn truncate_text(text: &str, max_len: usize) -> String {
+    if text.len() <= max_len {
+        text.to_string()
+    } else {
+        let truncated = text[..text.floor_char_boundary(max_len)].to_string();
+        format!("{truncated}\n... (truncated)")
+    }
 }
 
 pub fn truncate_summary(text: &str, max_chars: usize) -> String {
@@ -173,5 +235,77 @@ mod tests {
             parse_timestamp_to_ms(&json!("1970-01-01T00:00:01Z")),
             Some(1_000)
         );
+    }
+
+    #[test]
+    fn extract_text_from_item_tool_use_with_input() {
+        let item = json!({
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {"command": "ls -la"}
+        });
+        let result = extract_text_from_item(&item);
+        assert_eq!(result, Some("[Tool: Bash]\ncommand: ls -la".to_string()));
+    }
+
+    #[test]
+    fn extract_text_from_item_tool_use_without_input() {
+        let item = json!({
+            "type": "tool_use",
+            "name": "Bash"
+        });
+        let result = extract_text_from_item(&item);
+        assert_eq!(result, Some("[Tool: Bash]".to_string()));
+    }
+
+    #[test]
+    fn extract_text_from_item_tool_use_string_input() {
+        let item = json!({
+            "type": "tool_use",
+            "name": "Read",
+            "input": "/path/to/file.ts"
+        });
+        let result = extract_text_from_item(&item);
+        assert_eq!(result, Some("[Tool: Read]\n/path/to/file.ts".to_string()));
+    }
+
+    #[test]
+    fn extract_text_from_item_tool_use_multi_field_input() {
+        let item = json!({
+            "type": "tool_use",
+            "name": "Write",
+            "input": {"file_path": "/src/app.ts", "content": "hello"}
+        });
+        let result = extract_text_from_item(&item);
+        let expected = "[Tool: Write]\nfile_path: /src/app.ts\ncontent: hello";
+        assert_eq!(result, Some(expected.to_string()));
+    }
+
+    #[test]
+    fn format_tool_input_object_priority_ordering() {
+        let input = json!({
+            "description": "search for pattern",
+            "pattern": "fn main",
+            "command": "grep -r 'fn main'"
+        });
+        let result = format_tool_input(&input);
+        // command should come before pattern and description due to priority ordering
+        assert!(result.starts_with("command: grep -r 'fn main'"));
+        assert!(result.contains("pattern: fn main"));
+        assert!(result.contains("description: search for pattern"));
+    }
+
+    #[test]
+    fn truncate_text_short_passthrough() {
+        let result = truncate_text("hello", 10);
+        assert_eq!(result, "hello".to_string());
+    }
+
+    #[test]
+    fn truncate_text_long_truncates() {
+        let long = "a".repeat(3000);
+        let result = truncate_text(&long, 2000);
+        assert!(result.ends_with("... (truncated)"));
+        assert!(result.len() < 3000);
     }
 }

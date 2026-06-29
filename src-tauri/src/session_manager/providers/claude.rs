@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::get_claude_config_dir;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session_manager::{MessagePart, SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
@@ -79,7 +79,50 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 
         let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
 
-        messages.push(SessionMessage { role, content, ts });
+        // Extract structured parts for rich frontend rendering
+        let parts = message.get("content").and_then(|c| c.as_array()).map(|items| {
+            items.iter().filter_map(|item| {
+                let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
+                match item_type {
+                    "text" => item.get("text").and_then(Value::as_str).map(|text| {
+                        MessagePart::Text { text: text.to_string() }
+                    }),
+                    "tool_use" => {
+                        let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                        let name = item.get("name").and_then(Value::as_str).unwrap_or("unknown").to_string();
+                        let input = item.get("input")
+                            .map(|v| serde_json::to_string_pretty(v).unwrap_or_default())
+                            .unwrap_or_default();
+                        Some(MessagePart::ToolUse { id, name, input })
+                    }
+                    "tool_result" => {
+                        let tool_use_id = item.get("tool_use_id").and_then(Value::as_str).unwrap_or("").to_string();
+                        let raw_content = item.get("content")
+                            .map(extract_text)
+                            .unwrap_or_default();
+                        Some(MessagePart::ToolResult { tool_use_id, content: raw_content })
+                    }
+                    _ => None,
+                }
+            }).collect::<Vec<_>>()
+        });
+
+        // Use parts hash as content fallback to avoid empty content when all items are tool parts
+        let content = if content.trim().is_empty() {
+            if let Some(ref parts) = parts {
+                parts.iter().map(|p| match p {
+                    MessagePart::Text { text } => text.clone(),
+                    MessagePart::ToolUse { name, input, .. } => format!("[Tool: {name}]\n{input}"),
+                    MessagePart::ToolResult { content, .. } => content.clone(),
+                }).collect::<Vec<_>>().join("\n")
+            } else {
+                content
+            }
+        } else {
+            content
+        };
+
+        messages.push(SessionMessage { role, content, parts, ts });
     }
 
     Ok(messages)

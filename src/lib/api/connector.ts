@@ -22,6 +22,20 @@ export interface ConnectorProject {
   botSecret: string;
   /** 允许触达的用户（"*" 表示全部） */
   allowFrom: string;
+  /** 上下文窗口大小（tokens），connector 启动时自动从供应商注入，0 表示由 cc-connect 自动推断 */
+  contextWindow?: number;
+  /** 上下文满时自动触发 /compact（默认 true） */
+  autoCompressEnabled?: boolean;
+  /** 自动压缩 token 阈值（0 = 从模型自动推算） */
+  autoCompressMaxTokens?: number;
+  /** 自动压缩最小间隔分钟数（默认 30） */
+  autoCompressMinGapMins?: number;
+  /** API 错误导致会话终止时自动重试（默认 true） */
+  autoResumeEnabled?: boolean;
+  /** 自动恢复最大重试次数（默认 3） */
+  autoResumeMaxAttempts?: number;
+  /** 自动恢复初始延迟秒数（默认 5） */
+  autoResumeInitialDelaySecs?: number;
 }
 
 /** Connector 总配置（与后端 ConnectorConfig 对应） */

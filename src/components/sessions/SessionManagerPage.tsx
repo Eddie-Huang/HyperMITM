@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";import { useSessionSearch } from "@/hooks/useSessionSearch";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
@@ -147,11 +146,42 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     gap: 12,
   });
 
+  // Track whether user has scrolled up away from bottom
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+
+  // Scroll to bottom (newest message) when selecting a new session
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
+    if (messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
+      setIsUserScrolledUp(false);
     }
-  }, [selectedKey]);
+  }, [selectedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-scroll to bottom when new messages arrive, unless user scrolled up
+  useEffect(() => {
+    if (!isUserScrolledUp && messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, {
+        align: "end",
+        behavior: "smooth",
+      });
+    }
+  }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detect user scroll position — set isUserScrolledUp when not near bottom
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // "At bottom" if within 50px tolerance
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setIsUserScrolledUp(!isAtBottom);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
 
   useEffect(() => {
     const validKeys = new Set(
