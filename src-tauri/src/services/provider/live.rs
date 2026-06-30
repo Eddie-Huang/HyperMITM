@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -31,6 +32,25 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+/// Preserve any top-level keys from the existing live file that the
+/// provider config doesn't define (e.g. `hooks`, `plugins`,
+/// `extraKnownMarketplaces`, `theme`, `enabledPlugins`, etc.). This
+/// ensures user-level registrations (claude-mem hooks, custom plugins,
+/// marketplace URLs) survive provider switches.
+pub(crate) fn merge_preserved_user_keys(path: &Path, settings: &mut Value) {
+    if let Ok(existing) = read_json_file::<Value>(path) {
+        if let Some(existing_obj) = existing.as_object() {
+            if let Some(settings_obj) = settings.as_object_mut() {
+                for (key, val) in existing_obj {
+                    if !settings_obj.contains_key(key) {
+                        settings_obj.insert(key.clone(), val.clone());
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn provider_exists_in_live_config(
@@ -740,7 +760,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+
+            // Preserve user-level keys from the existing live file that are not
+            // part of any provider's settings_config (e.g. hooks for claude-mem,
+            // plugins, extraKnownMarketplaces, theme, enabledPlugins, etc.)
+            merge_preserved_user_keys(&path, &mut settings);
+
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {

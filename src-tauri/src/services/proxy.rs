@@ -10,7 +10,8 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_settings_with_common_config, merge_preserved_user_keys,
+    write_live_with_common_config,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -2409,7 +2410,8 @@ impl ProxyService {
 
     fn write_claude_live(&self, config: &Value) -> Result<(), String> {
         let path = get_claude_settings_path();
-        let settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+        let mut settings = crate::services::provider::sanitize_claude_settings_for_live(config);
+        merge_preserved_user_keys(&path, &mut settings);
         write_json_file(&path, &settings).map_err(|e| format!("写入 Claude 配置失败: {e}"))
     }
 
