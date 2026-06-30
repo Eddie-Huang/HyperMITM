@@ -73,14 +73,17 @@ impl HeadroomManager {
             .arg("--mode")
             .arg(&config.mode);
 
+        // headroom >= 0.26 改用 --anthropic-api-url 指定上游地址
+        cmd.arg("--anthropic-api-url");
+        cmd.arg(upstream_base_url);
+
         // 追加用户自定义参数（空格分隔）
         for extra in config.extra_args.split_whitespace() {
             cmd.arg(extra);
         }
 
-        // headroom 通过该环境变量解析上游
+        // 同时保留环境变量兜底（旧版本 headroom 兼容 + resolve_api_overrides 仍会读取）
         cmd.env("ANTHROPIC_TARGET_API_URL", upstream_base_url);
-        // 同时设置 HEADROOM_PORT 以兼容只读 env 的旧版本
         cmd.env("HEADROOM_PORT", config.port.to_string());
 
         // 不继承 stdin；stdout/stderr 丢弃，避免管道写满阻塞子进程
