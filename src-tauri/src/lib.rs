@@ -27,6 +27,7 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+mod monitor;
 mod services;
 mod session_manager;
 mod settings;
@@ -909,6 +910,15 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动监控服务（监控 Web UI daemon）
+            {
+                let state = app.state::<AppState>().inner().clone();
+                let monitor_port = 15722; // default: proxy default port (15721) + 1
+                tauri::async_runtime::spawn(async move {
+                    crate::monitor::server::start_monitor_server(state, monitor_port).await;
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1162,6 +1172,7 @@ pub fn run() {
             commands::open_config_folder,
             commands::pick_directory,
             commands::open_external,
+commands::open_monitor_web_ui,
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
@@ -1398,6 +1409,7 @@ pub fn run() {
             commands::get_hermes_live_provider,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
+commands::open_monitor_web_ui,
             commands::launch_hermes_dashboard,
             commands::get_hermes_memory,
             commands::set_hermes_memory,

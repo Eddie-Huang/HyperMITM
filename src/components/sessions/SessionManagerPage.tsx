@@ -148,9 +148,14 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   });
 
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
-    }
+    if (!messages.length || !scrollContainerRef.current) return;
+    // Scroll to the newest message (bottom) when opening a session
+    const lastIndex = messages.length - 1;
+    // Delay slightly to let virtualizer measure items
+    const timer = setTimeout(() => {
+      virtualizer.scrollToIndex(lastIndex, { align: "end" });
+    }, 50);
+    return () => clearTimeout(timer);
   }, [selectedKey]);
 
   useEffect(() => {

@@ -87,6 +87,10 @@ impl HeadroomManager {
         cmd.env("HEADROOM_PORT", config.port.to_string());
         // HyperMITM 的本地代理使用 hyper HTTP/1.1，headroom 的 httpx 默认 HTTP/2 协商会失败
         cmd.env("HEADROOM_HTTP2", "false");
+        // 阻止 httpx 检测 Windows 系统代理设置（如 Clash/V2Ray），这些代理与 httpcore
+        // 的 AsyncHTTPProxy 对 hyper server 不兼容，会导致 ReadTimeout / 502
+        cmd.env("NO_PROXY", "*");
+        cmd.env("no_proxy", "*");
 
         // 不继承 stdin；stdout/stderr 丢弃，避免管道写满阻塞子进程
         cmd.stdin(Stdio::null())

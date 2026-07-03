@@ -19,6 +19,17 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// 打开外部链接
+// ── 打开监控面板 ──────────────────────────────────────────────────────────
+/// 在浏览器中打开监控面板本地 Web UI
+#[tauri::command]
+pub async fn open_monitor_web_ui(app: AppHandle) -> Result<bool, String> {
+    let url = "http://127.0.0.1:15722".to_string();
+    app.opener()
+        .open_url(&url, None::<String>)
+        .map_err(|e| format!("打开监控面板失败: {e}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
     let url = if url.starts_with("http://") || url.starts_with("https://") {
