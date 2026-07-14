@@ -649,7 +649,7 @@ fn build_tool_action_line(
         // (npm/pnpm)或 .exe(volta),静态命令头部是 `npm`(也是 .cmd)、`py` 等——
         // 全部加 `call ` 前缀,风格统一且语义正确。含空格的头部已被 `win_quote_path_for_batch`
         // 加上双引号,call 对带引号的路径解析正常。
-        return Ok(format!("call {command}"));
+        Ok(format!("call {command}"))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1080,6 +1080,7 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn fallback_user_shell() -> &'static str {
     if cfg!(target_os = "macos") {
         "/bin/zsh"
@@ -1088,6 +1089,7 @@ fn fallback_user_shell() -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn valid_user_shell_path(shell: &str) -> bool {
     if shell.is_empty()
         || !shell.starts_with('/')
@@ -1111,11 +1113,13 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 fn is_executable_file(path: &std::path::Path) -> bool {
     path.is_file()
 }
 
 /// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
+#[allow(dead_code)]
 fn get_user_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -1124,6 +1128,7 @@ fn get_user_shell() -> String {
 }
 
 /// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
+#[allow(dead_code)]
 fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     let quoted_shell = shell_single_quote(shell);
 
@@ -1143,6 +1148,7 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 }
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+#[allow(dead_code)]
 fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
     let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
     let command = cwd
@@ -1163,6 +1169,7 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
     )
 }
 
+#[allow(dead_code)]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -1171,6 +1178,7 @@ fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
         return String::new();
@@ -1456,11 +1464,15 @@ fn opencode_extra_search_paths(
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        vec![
+        let extensionless = dir.join(tool);
+        let mut candidates = vec![
             dir.join(format!("{tool}.cmd")),
             dir.join(format!("{tool}.exe")),
-            dir.join(tool),
-        ]
+        ];
+        if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
+            candidates.push(extensionless);
+        }
+        candidates
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1628,6 +1640,18 @@ fn is_windows_command_script(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::path::PathBuf> {
+    if path.extension().is_some() {
+        return None;
+    }
+
+    ["cmd", "exe"]
+        .iter()
+        .map(|ext| path.with_extension(ext))
+        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(target_os = "windows")]
@@ -1832,7 +1856,10 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if first.is_empty() {
         return None;
     }
-    std::fs::canonicalize(first).ok()
+    let path = Path::new(first);
+    let preferred =
+        windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
+    std::fs::canonicalize(preferred).ok()
 }
 
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
@@ -2723,7 +2750,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -3244,6 +3271,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[allow(dead_code)]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -5072,6 +5100,35 @@ mod tests {
                 PathBuf::from("C:\\tools\\opencode"),
             ]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tool_executable_candidates_windows_skips_shadowed_npm_unix_shim() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let extensionless = dir.path().join("codex");
+        let cmd = dir.path().join("codex.cmd");
+        std::fs::write(&extensionless, "").expect("extensionless shim should be created");
+        std::fs::write(&cmd, "").expect("cmd shim should be created");
+
+        let candidates = tool_executable_candidates("codex", dir.path());
+
+        assert_eq!(candidates, vec![cmd.clone(), dir.path().join("codex.exe")]);
+        assert!(!candidates.contains(&extensionless));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_runnable_sibling_prefers_cmd_over_extensionless_tool() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let extensionless = dir.path().join("codex");
+        let cmd = dir.path().join("codex.cmd");
+        std::fs::write(&extensionless, "").expect("extensionless shim should be created");
+        std::fs::write(&cmd, "").expect("cmd shim should be created");
+
+        let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
+
+        assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
     }
 
     #[test]

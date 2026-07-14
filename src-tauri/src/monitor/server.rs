@@ -31,6 +31,7 @@ struct MonitorAssets;
 pub struct MonitorConfig {
     pub listen_addr: String,
     pub port: u16,
+    #[allow(dead_code)]
     pub auth_token: Option<String>,
 }
 
@@ -96,6 +97,7 @@ impl MonitorServer {
     }
 
     /// Stop the monitor server.
+    #[allow(dead_code)]
     pub fn stop(&self) {
         let mut guard = self.shutdown_tx.lock().unwrap();
         if let Some(tx) = guard.take() {
