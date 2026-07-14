@@ -28,7 +28,6 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
-mod monitor;
 mod services;
 mod session_manager;
 mod settings;
@@ -915,8 +914,18 @@ pub fn run() {
             {
                 let state = app.state::<AppState>().inner().clone();
                 let monitor_port = 15722; // default: proxy default port (15721) + 1
+                let db = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    crate::monitor::server::start_monitor_server(state, monitor_port).await;
+                    use crate::monitor::{MonitorServer, MonitorConfig};
+                    let config = MonitorConfig {
+                        listen_addr: "127.0.0.1".to_string(),
+                        port: monitor_port,
+                        auth_token: None,
+                    };
+                    let server = MonitorServer::new(config, db);
+                    if let Err(e) = server.start().await {
+                        log::error!("[monitor] server exited: {e}");
+                    }
                 });
             }
 
