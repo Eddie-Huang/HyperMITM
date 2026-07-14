@@ -910,6 +910,25 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            // 启动监控服务（监控 Web UI daemon）
+            {
+                let state = app.state::<AppState>().inner().clone();
+                let monitor_port = 15722; // default: proxy default port (15721) + 1
+                let db = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    use crate::monitor::{MonitorServer, MonitorConfig};
+                    let config = MonitorConfig {
+                        listen_addr: "127.0.0.1".to_string(),
+                        port: monitor_port,
+                        auth_token: None,
+                    };
+                    let server = MonitorServer::new(config, db);
+                    if let Err(e) = server.start().await {
+                        log::error!("[monitor] server exited: {e}");
+                    }
+                });
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1166,6 +1185,7 @@ pub fn run() {
             commands::open_config_folder,
             commands::pick_directory,
             commands::open_external,
+commands::open_monitor_web_ui,
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
@@ -1402,6 +1422,7 @@ pub fn run() {
             commands::get_hermes_live_provider,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
+commands::open_monitor_web_ui,
             commands::launch_hermes_dashboard,
             commands::get_hermes_memory,
             commands::set_hermes_memory,
