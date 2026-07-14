@@ -1207,6 +1207,20 @@ function App() {
                     <BarChart2 className="w-4 h-4" />
                   </Button>
                 )}
+                {/* Monitor button */}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    settingsApi.openExternal('http://127.0.0.1:15722').catch(() => {
+                      toast.error("Monitor server not running. Start the proxy first.");
+                    });
+                  }}
+                  title="Monitor"
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                </Button>
               </div>
             )}
           </div>
