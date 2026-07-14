@@ -1,0 +1,3 @@
+- [HyperMITM project](hypermitm-project.md) — fork of cc-switch being rebranded + given native headroom integration
+- [HyperMITM Complete Codebase Understanding](hypermitm-complete-codebase-understanding.md) — deep understanding of entire architecture
+- [Context Window Bridge Fix](context-window-bridge-fix.md) — fix for cc-connect bridge hardcoded 200k context window

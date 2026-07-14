@@ -11,7 +11,7 @@
 //!   手动开启的则保持运行，并把客户端地址从（已停止的）headroom 切回本地代理。
 
 use crate::proxy::types::HeadroomConfig;
-use crate::services::{HeadroomManager, HeadroomStatus};
+use crate::services::{ConnectorManager, HeadroomManager, HeadroomStatus};
 use crate::store::AppState;
 
 /// 读取 headroom 配置（不存在则返回默认值）
@@ -54,6 +54,14 @@ async fn enable_headroom(
         return Err(format!(
             "开启本地代理接管失败（请先在「供应商」中配置并选择一个 Claude 供应商）：{e}"
         ));
+    }
+
+    // 6. 自动激活 connector（如已启用但未运行）
+    let connector_cfg = state.db.get_connector_config().map_err(|e| e.to_string())?;
+    if connector_cfg.enabled && !ConnectorManager::is_running() {
+        if let Err(e) = crate::commands::enable_connector(state, &connector_cfg).await {
+            log::warn!("[Connector] headroom 启动时自动激活 connector 失败: {e}");
+        }
     }
 
     Ok(status)

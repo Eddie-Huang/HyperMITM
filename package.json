@@ -1,6 +1,6 @@
 {
   "name": "hyper-mitm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Hyper MITM — All-in-One Assistant for Claude Code, Codex & Gemini CLI, with native headroom context compression",
   "type": "module",
   "scripts": {

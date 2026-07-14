@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 
-const ccSrc = resolve(repoRoot, process.env.CC_CONNECT_SRC ?? "../cc-connect");
+const ccSrc = resolve(repoRoot, process.env.CC_CONNECT_SRC ?? "./cc-connect");
 const outDir = resolve(repoRoot, "src-tauri", "binaries");
 
 // Resolve the Rust host target triple (Tauri externalBin requires it as suffix).

@@ -488,6 +488,58 @@ pub struct ConnectorProject {
     /// 允许触达的用户（"*" 表示全部）
     #[serde(default = "default_connector_allow_from")]
     pub allow_from: String,
+    /// 自动压缩：上下文满时自动触发 /compact
+    #[serde(default = "connector_default_true")]
+    pub auto_compress_enabled: bool,
+    /// 上下文窗口大小（tokens），由 connector 启动时从提供商报告的上下文窗口注入。
+    /// 0 表示由 cc-connect 自动推断（2024 年前的旧行为：200k）。
+    #[serde(default)]
+    pub context_window: u64,
+    /// 自动压缩 token 阈值（0 = 从模型名称自动推算：opus/fable→800000, sonnet→160000, haiku→80000）
+    #[serde(default)]
+    pub auto_compress_max_tokens: u64,
+    /// 自动压缩最小间隔分钟数
+    #[serde(default = "default_auto_compress_min_gap")]
+    pub auto_compress_min_gap_mins: u32,
+    /// 自动恢复：API 错误导致会话终止时自动重试
+    #[serde(default = "connector_default_true")]
+    pub auto_resume_enabled: bool,
+    /// 自动恢复最大重试次数
+    #[serde(default = "default_auto_resume_max_attempts")]
+    pub auto_resume_max_attempts: u32,
+    /// 自动恢复初始延迟秒数
+    #[serde(default = "default_auto_resume_initial_delay")]
+    pub auto_resume_initial_delay_secs: u32,
+}
+
+fn connector_default_true() -> bool {
+    true
+}
+
+fn default_auto_compress_min_gap() -> u32 {
+    30
+}
+
+fn default_auto_resume_max_attempts() -> u32 {
+    3
+}
+
+fn default_auto_resume_initial_delay() -> u32 {
+    5
+}
+
+/// 从模型名称推算自动压缩 token 阈值（≈80% 上下文窗口）
+pub fn resolve_auto_compress_max_tokens(model: &str) -> u64 {
+    let m = model.to_lowercase();
+    if m.contains("opus") || m.contains("fable") {
+        800_000
+    } else if m.contains("sonnet") {
+        160_000
+    } else if m.contains("haiku") {
+        80_000
+    } else {
+        120_000
+    }
 }
 
 /// Connector 总配置（持久化于 settings 键 `connector_config`）。

@@ -14,6 +14,35 @@ use crate::services::{ConnectorManager, ConnectorStatus};
 use crate::store::AppState;
 use std::path::PathBuf;
 
+/// 从供应商的 settings_config 中提取 context_window。
+/// 优先读取 settings_config["context_window"]；失败时回退到模型名推算。
+fn extract_context_window_from_provider(provider: &crate::provider::Provider) -> u64 {
+    if let Some(cw) = provider
+        .settings_config
+        .get("context_window")
+        .and_then(|v| v.as_u64())
+    {
+        return cw;
+    }
+    // fallback：从模型名推算
+    if let Some(model) = provider
+        .settings_config
+        .get("model")
+        .and_then(|v| v.as_str())
+    {
+        let m = model.to_lowercase();
+        if m.contains("opus") || m.contains("fable") || m.contains("claude-3-5")
+            || m.contains("glm-5")
+        {
+            return 1_000_000;
+        }
+        if m.contains("sonnet") || m.contains("claude-3-7") {
+            return 200_000;
+        }
+    }
+    0 // 0 = 由 cc-connect 自动推断
+}
+
 /// TOML 基本字符串转义（反斜杠与引号）。
 fn toml_escape(v: &str) -> String {
     v.replace('\\', "\\\\").replace('"', "\\\"")
@@ -99,8 +128,11 @@ fn write_config_toml(config: &ConnectorConfig, base_url: &str) -> Result<(PathBu
         s.push_str("[projects.agent.options]\n");
         s.push_str(&format!("work_dir = \"{}\"\n", toml_escape(&work_dir)));
         s.push_str(&format!("model = \"{}\"\n", toml_escape(&model)));
-        s.push_str(&format!("mode = \"{}\"\n\n", toml_escape(&mode)));
-        s.push_str("[projects.agent.options.env]\n");
+        s.push_str(&format!("mode = \"{}\"\n", toml_escape(&mode)));
+        if p.context_window > 0 {
+            s.push_str(&format!("max_context_tokens = {}\n", p.context_window));
+        }
+        s.push_str("\n[projects.agent.options.env]\n");
         s.push_str(&format!(
             "ANTHROPIC_BASE_URL = \"{}\"\n",
             toml_escape(base_url)
@@ -117,6 +149,29 @@ fn write_config_toml(config: &ConnectorConfig, base_url: &str) -> Result<(PathBu
         s.push_str(&format!(
             "allow_from = \"{}\"\n\n",
             toml_escape(&allow_from)
+        ));
+
+        // Auto-compress: 上下文满时自动触发 /compact
+        let max_tokens = if p.auto_compress_max_tokens > 0 {
+            p.auto_compress_max_tokens
+        } else {
+            crate::proxy::types::resolve_auto_compress_max_tokens(&model)
+        };
+        s.push_str("[projects.auto_compress]\n");
+        s.push_str(&format!("enabled = {}\n", p.auto_compress_enabled));
+        s.push_str(&format!("max_tokens = {}\n", max_tokens));
+        s.push_str(&format!("min_gap_mins = {}\n\n", p.auto_compress_min_gap_mins));
+
+        // Auto-resume: API 错误导致会话终止时自动重试
+        s.push_str("[projects.auto_resume]\n");
+        s.push_str(&format!("enabled = {}\n", p.auto_resume_enabled));
+        s.push_str(&format!(
+            "max_attempts = {}\n",
+            p.auto_resume_max_attempts
+        ));
+        s.push_str(&format!(
+            "initial_delay_secs = {}\n\n",
+            p.auto_resume_initial_delay_secs
         ));
     }
 
@@ -140,7 +195,7 @@ async fn resolve_base_url(state: &tauri::State<'_, AppState>) -> Result<String, 
 }
 
 /// 开启 connector：强制开启本地代理接管，生成配置并启动 cc-connect。
-async fn enable_connector(
+pub async fn enable_connector(
     state: &tauri::State<'_, AppState>,
     config: &ConnectorConfig,
 ) -> Result<ConnectorStatus, String> {
@@ -167,7 +222,21 @@ async fn enable_connector(
 
     // 3. 计算上游并生成 config.toml
     let base_url = resolve_base_url(state).await?;
-    let (path, count) = write_config_toml(config, &base_url)?;
+    let mut enhanced_config = config.clone();
+
+    // 3a. 从当前激活的 Claude 供应商注入 context_window
+    if let Ok(Some(provider_id)) = state.db.get_current_provider("claude") {
+        if let Ok(Some(provider)) = state.db.get_provider_by_id(&provider_id, "claude") {
+            let context_window = extract_context_window_from_provider(&provider);
+            for project in &mut enhanced_config.projects {
+                if project.context_window == 0 {
+                    project.context_window = context_window;
+                }
+            }
+        }
+    }
+
+    let (path, count) = write_config_toml(&enhanced_config, &base_url)?;
     let binary = resolve_binary(config)?;
 
     // 4. 启动 cc-connect；失败则回滚自动开启的代理
@@ -323,9 +392,16 @@ pub fn import_connector_from_ccconnect(
                 work_dir: if work_dir == "." { String::new() } else { work_dir },
                 model: "claude-opus-4-8".to_string(),
                 mode: "default".to_string(),
+                context_window: 0,
                 bot_id,
                 bot_secret,
                 allow_from,
+                auto_compress_enabled: true,
+                auto_compress_max_tokens: 0,
+                auto_compress_min_gap_mins: 30,
+                auto_resume_enabled: true,
+                auto_resume_max_attempts: 3,
+                auto_resume_initial_delay_secs: 5,
             });
         }
     }

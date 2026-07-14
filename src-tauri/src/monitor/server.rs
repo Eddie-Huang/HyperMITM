@@ -1,129 +1,147 @@
-//! Monitor daemon — lightweight axum HTTP server for usage and session monitoring.
-//! Runs on a separate port (default: proxy_port + 1), serves REST API for the web UI.
+//! Monitor Axum web server
+//!
+//! Lightweight HTTP server that serves:
+//! - REST API at `/api/monitor/*` (usage + session data)
+//! - Static SPA frontend at `/` (embedded via rust-embed)
 
+use super::handlers::{get_daily_trends, get_model_stats, get_provider_stats, get_session_messages, get_status, get_usage_summary, get_usage_summary_by_app, list_sessions, MonitorState};
+use crate::database::Database;
 use axum::{
-    extract::{Path, State},
-    http::Method,
-    routing::get,
-    Json, Router,
+    extract::Request,
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
+    routing::{get, Router},
 };
+use rust_embed::Embed;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tokio::sync::oneshot;
 
-use crate::session_manager;
-use crate::store::AppState;
+/// Embedded monitor frontend assets.
+/// At build time, the `dist-monitor/` directory must contain the built React SPA.
+/// If the directory is empty or missing, the monitor serves only the REST API
+/// (no web dashboard).
+#[derive(Embed)]
+#[folder = "dist-monitor/"]
+#[prefix = ""]
+struct MonitorAssets;
 
-/// Start the monitor HTTP server on the given port.
-/// Binds to 127.0.0.1 only. Falls back to port+1 if the primary port is taken.
-pub async fn start_monitor_server(state: AppState, port: u16) {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([Method::GET, Method::OPTIONS])
-        .allow_headers(Any);
+/// Configuration for the monitor server.
+#[derive(Debug, Clone)]
+pub struct MonitorConfig {
+    pub listen_addr: String,
+    pub port: u16,
+    pub auth_token: Option<String>,
+}
 
-    let app = Router::new()
-        .route("/api/health", get(health_check))
-        .route("/api/usage/summary", get(usage_summary))
-        .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/{provider}/{*path}", get(session_messages))
-        .route("/api/proxy/status", get(proxy_status))
-        .layer(cors)
-        .with_state(Arc::new(state));
+/// The monitor HTTP server.
+pub struct MonitorServer {
+    config: MonitorConfig,
+    state: MonitorState,
+    shutdown_tx: Arc<std::sync::Mutex<Option<oneshot::Sender<()>>>>,
+}
 
-    let addr = format!("127.0.0.1:{}", port);
-    log::info!("[monitor] binding to {addr}");
+impl MonitorServer {
+    pub fn new(config: MonitorConfig, db: Arc<Database>) -> Self {
+        Self {
+            config,
+            state: MonitorState { db },
+            shutdown_tx: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
 
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            log::error!("[monitor] failed to bind port {port}: {e}, trying {}+1", port);
-            let fallback_port = port + 1;
-            let fallback_addr = format!("127.0.0.1:{}", fallback_port);
-            match tokio::net::TcpListener::bind(&fallback_addr).await {
-                Ok(l) => l,
-                Err(e2) => {
-                    log::error!("[monitor] fallback port also failed: {e2}");
-                    return;
-                }
+    /// Build the Axum router with API routes + static file serving.
+    fn build_router(&self) -> Router {
+        let api = Router::new()
+            .route("/usage/summary", get(get_usage_summary))
+            .route("/usage/by-app", get(get_usage_summary_by_app))
+            .route("/usage/trends", get(get_daily_trends))
+            .route("/usage/provider-stats", get(get_provider_stats))
+            .route("/usage/model-stats", get(get_model_stats))
+            .route("/sessions/list", get(list_sessions))
+            .route("/sessions/messages", get(get_session_messages))
+            .route("/status", get(get_status));
+
+        Router::new()
+            .nest("/api/monitor", api)
+            .fallback(static_file_handler)
+            .with_state(self.state.clone())
+    }
+
+    /// Start the monitor server. Blocks until shutdown signal received.
+    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let addr: SocketAddr = format!("{}:{}", self.config.listen_addr, self.config.port)
+            .parse()
+            .map_err(|e| format!("Invalid monitor address: {e}"))?;
+
+        let (tx, rx) = oneshot::channel::<()>();
+        {
+            let mut guard = self.shutdown_tx.lock().unwrap();
+            *guard = Some(tx);
+        }
+
+        let router = self.build_router();
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        log::info!("Monitor server listening on {addr}");
+
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                rx.await.ok();
+            })
+            .await?;
+
+        log::info!("Monitor server shut down");
+        Ok(())
+    }
+
+    /// Stop the monitor server.
+    pub fn stop(&self) {
+        let mut guard = self.shutdown_tx.lock().unwrap();
+        if let Some(tx) = guard.take() {
+            tx.send(()).ok();
+        }
+    }
+}
+
+/// Serve embedded static files from `dist-monitor/`.
+/// Falls back to `index.html` for SPA routing (unknown paths → index.html).
+async fn static_file_handler(req: Request) -> Response {
+    let path = req.uri().path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match MonitorAssets::get(path) {
+        Some(file) => {
+            let mime = mime_from_path(path);
+            (
+                [(header::CONTENT_TYPE, mime.to_string())],
+                file.data.into_owned(),
+            )
+                .into_response()
+        }
+        None => {
+            // SPA fallback: serve index.html for unknown routes
+            match MonitorAssets::get("index.html") {
+                Some(file) => Html(String::from_utf8_lossy(&file.data).into_owned()).into_response(),
+                None => StatusCode::NOT_FOUND.into_response(),
             }
         }
-    };
-
-    if let Err(e) = axum::serve(listener, app).await {
-        log::error!("[monitor] server exited: {e}");
     }
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────
-
-async fn health_check() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
-}
-
-/// 30-day usage summary.
-async fn usage_summary(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
-    let db = &state.db;
-    let end_ts = chrono::Utc::now().timestamp_millis();
-    let start_ts = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp_millis();
-
-    let summary = db.get_usage_summary(Some(start_ts), Some(end_ts), None, None, None);
-    match summary {
-        Ok(s) => Json(serde_json::json!({
-            "total_input_tokens": s.total_input_tokens,
-            "total_output_tokens": s.total_output_tokens,
-            "total_cost_usd": s.total_cost,
-            "request_count": s.total_requests,
-            "success_rate": s.success_rate,
-            "cache_hit_rate": s.cache_hit_rate,
-            "real_total_tokens": s.real_total_tokens,
-        })),
-        Err(e) => Json(serde_json::json!({
-            "error": format!("query failed: {e}"),
-        })),
+fn mime_from_path(path: &str) -> String {
+    match path.rsplit('.').next() {
+        Some("html") => mime::TEXT_HTML.to_string(),
+        Some("js") => mime::APPLICATION_JAVASCRIPT.to_string(),
+        Some("mjs") => mime::APPLICATION_JAVASCRIPT.to_string(),
+        Some("css") => mime::TEXT_CSS.to_string(),
+        Some("json") => mime::APPLICATION_JSON.to_string(),
+        Some("png") => mime::IMAGE_PNG.to_string(),
+        Some("jpg") | Some("jpeg") => mime::IMAGE_JPEG.to_string(),
+        Some("svg") => mime::IMAGE_SVG.to_string(),
+        Some("woff") => mime::FONT_WOFF.to_string(),
+        Some("woff2") => "font/woff2".parse().unwrap_or(mime::APPLICATION_OCTET_STREAM.to_string()),
+        Some("ico") => "image/x-icon".to_string(),
+        _ => mime::APPLICATION_OCTET_STREAM.to_string(),
     }
-}
-
-/// List all sessions from disk.
-async fn list_sessions(
-    State(_state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
-    let sessions: Vec<serde_json::Value> = session_manager::scan_sessions()
-        .into_iter()
-        .map(|s| serde_json::to_value(s).unwrap_or_default())
-        .collect();
-    Json(serde_json::json!(sessions))
-}
-
-/// Get messages for a specific session by provider + source path.
-async fn session_messages(
-    State(_state): State<Arc<AppState>>,
-    Path((provider, path)): Path<(String, String)>,
-) -> Json<serde_json::Value> {
-    let messages = session_manager::load_messages(&provider, &path);
-    match messages {
-        Ok(msgs) => Json(serde_json::json!(msgs)),
-        Err(e) => Json(serde_json::json!({ "error": e })),
-    }
-}
-
-/// Current proxy server status (running state, port).
-async fn proxy_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
-    let running = state.proxy_service.is_running().await;
-    let (addr, port) = if running {
-        match state.proxy_service.get_status().await {
-            Ok(status) => (Some(status.address), Some(status.port)),
-            Err(_) => (None, None),
-        }
-    } else {
-        (None::<String>, None::<u16>)
-    };
-    Json(serde_json::json!({
-        "running": running,
-        "address": addr,
-        "port": port,
-    }))
 }

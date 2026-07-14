@@ -478,6 +478,17 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    // ===== Web Monitor 设置 =====
+    /// Whether the web monitor server is enabled (default: false)
+    #[serde(default)]
+    pub enable_monitor: bool,
+    /// Port for the web monitor server (default: 9528)
+    #[serde(default = "default_monitor_port")]
+    pub monitor_port: u16,
+    /// Optional auth token for the web monitor API
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitor_auth_token: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -486,6 +497,10 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn default_monitor_port() -> u16 {
+    9528
 }
 
 impl Default for AppSettings {
@@ -533,6 +548,9 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            enable_monitor: false,
+            monitor_port: 9528,
+            monitor_auth_token: None,
         }
     }
 }

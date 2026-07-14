@@ -19,6 +19,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod monitor;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -1021,6 +1022,9 @@ pub fn run() {
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 
+                // 启动 Web Monitor（如果启用）
+                start_monitor_if_enabled(&state).await;
+
                 // Periodic backup check (on startup)
                 if let Err(e) = state.db.periodic_backup_if_needed() {
                     log::warn!("Periodic backup failed on startup: {e}");
@@ -1700,6 +1704,34 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
             log::info!("已显式从系统托盘移除图标");
         }
     }
+}
+
+// ============================================================
+// Web Monitor 启动
+// ============================================================
+
+/// If `enable_monitor` is true in settings, start the monitor Axum server.
+async fn start_monitor_if_enabled(state: &store::AppState) {
+    let settings = crate::settings::get_settings();
+    if !settings.enable_monitor {
+        log::info!("Web monitor disabled in settings");
+        return;
+    }
+    let config = monitor::MonitorConfig {
+        listen_addr: "0.0.0.0".to_string(),
+        port: settings.monitor_port,
+        auth_token: settings.monitor_auth_token.clone(),
+    };
+    let server = monitor::MonitorServer::new(config, state.db.clone());
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = server.start().await {
+            log::error!("Monitor server failed: {e}");
+        }
+    });
+    log::info!(
+        "Web monitor enabled — starting on port {}",
+        settings.monitor_port
+    );
 }
 
 // ============================================================

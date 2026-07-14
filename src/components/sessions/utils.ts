@@ -114,12 +114,12 @@ export const getRoleTone = (role: string) => {
   return "text-muted-foreground";
 };
 
-export const getRoleLabel = (role: string, t: (key: string) => string) => {
+export const getRoleLabel = (role: string) => {
   const normalized = role.toLowerCase();
   if (normalized === "assistant") return "AI";
-  if (normalized === "user") return t("sessionManager.roleUser");
-  if (normalized === "system") return t("sessionManager.roleSystem");
-  if (normalized === "tool") return t("sessionManager.roleTool");
+  if (normalized === "user") return "User";
+  if (normalized === "system") return "System";
+  if (normalized === "tool") return "Tool";
   return role;
 };
 

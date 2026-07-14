@@ -27,11 +27,25 @@ pub struct SessionMeta {
     pub resume_command: Option<String>,
 }
 
+/// A single content part within a session message.
+/// Mirrors the content block types in the conversation protocol.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum MessagePart {
+    Text { text: String },
+    ToolUse { id: String, name: String, input: String },
+    ToolResult { tool_use_id: String, content: String },
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
     pub role: String,
+    /// Legacy plain-text rendering (kept for backward compatibility).
     pub content: String,
+    /// Structured content parts for rich rendering on the frontend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<MessagePart>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ts: Option<i64>,
 }

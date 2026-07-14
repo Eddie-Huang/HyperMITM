@@ -1,0 +1,3 @@
+[submodule "cc-connect"]
+	path = cc-connect
+	url = https://github.com/Eddie-Huang/cc-connect.git
