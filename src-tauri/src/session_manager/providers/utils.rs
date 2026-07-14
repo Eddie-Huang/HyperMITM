@@ -96,7 +96,7 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
             .unwrap_or("unknown");
         let input_text = item
             .get("input")
-            .map(|v| format_tool_input(v))
+            .map(format_tool_input)
             .unwrap_or_default();
         if input_text.is_empty() {
             return Some(format!("[Tool: {name}]"));
@@ -180,6 +180,7 @@ fn format_tool_input(input: &Value) -> String {
 }
 
 /// Truncate text to a maximum length, adding an ellipsis suffix if truncated.
+#[allow(clippy::incompatible_msrv)]
 fn truncate_text(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         text.to_string()

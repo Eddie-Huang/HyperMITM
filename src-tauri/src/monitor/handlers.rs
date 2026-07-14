@@ -44,6 +44,7 @@ pub struct UsageTrendsParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct RequestLogsParams {
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
